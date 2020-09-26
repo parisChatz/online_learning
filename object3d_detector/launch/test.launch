@@ -1,0 +1,7 @@
+<launch>
+  <!-- NBellotto's Bayes People Tracker -->
+  <rosparam command="load" file="$(find object3d_detector)/config/object3d_detector_ol_ms_copy.yaml"/>
+  <node pkg="bayes_people_tracker" type="bayes_people_tracker_ol" name="bayes_people_tracker_ol" output="screen" respawn="true">
+    <param name="target_frame" type="string" value="odom"/>
+  </node>
+</launch>

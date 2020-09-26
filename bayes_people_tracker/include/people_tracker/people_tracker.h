@@ -48,25 +48,25 @@ class PeopleTracker
   void publishDetections(geometry_msgs::PoseArray msg);
   void publishDetections(people_msgs::People msg);
   void publishDetections(double time_sec,
-			 geometry_msgs::Pose closest,
-			 std::vector<geometry_msgs::Pose> ppl,
-			 std::vector<geometry_msgs::Pose> vels,
-			 std::vector<std::string> uuids,
-			 std::vector<double> distances,
-			 std::vector<double> angles,
-			 double min_dist,
-			 double angle);
+       geometry_msgs::Pose closest,
+       std::vector<geometry_msgs::Pose> ppl,
+       std::vector<geometry_msgs::Pose> vels,
+       std::vector<std::string> uuids,
+       std::vector<double> distances,
+       std::vector<double> angles,
+       double min_dist,
+       double angle);
   void publishTrajectory(std::vector<geometry_msgs::Pose> poses,
-			 std::vector<geometry_msgs::Pose> vels,
-			 std::vector<geometry_msgs::Pose> vars,
-			 std::vector<long> pids,
-			 ros::Publisher& pub);
+       std::vector<geometry_msgs::Pose> vels,
+       std::vector<geometry_msgs::Pose> vars,
+       std::vector<long> pids,
+       ros::Publisher& pub);
   void PN_experts(geometry_msgs::PoseArray &variance,
-		  geometry_msgs::PoseArray &velocity,
-		  geometry_msgs::PoseArray &trajectory);
+      geometry_msgs::PoseArray &velocity,
+      geometry_msgs::PoseArray &trajectory);
   void createVisualisation(std::vector<geometry_msgs::Pose> poses,
-			   std::vector<long> pids,
-			   ros::Publisher& pub);
+         std::vector<long> pids,
+         ros::Publisher& pub);
   std::vector<double> cartesianToPolar(geometry_msgs::Point point);
   void detectorCallback(const geometry_msgs::PoseArray::ConstPtr &pta, string detector);
   void connectCallback(ros::NodeHandle &n);
@@ -105,12 +105,12 @@ class PeopleTracker
   }
   
   visualization_msgs::Marker createMarker(
-					  int id,
-					  int type,
-					  int action,
-					  geometry_msgs::Pose pose,
-					  geometry_msgs::Vector3 scale,
-					  std_msgs::ColorRGBA color) {
+            int id,
+            int type,
+            int action,
+            geometry_msgs::Pose pose,
+            geometry_msgs::Vector3 scale,
+            std_msgs::ColorRGBA color) {
     visualization_msgs::Marker marker;
     marker.header.frame_id = target_frame;
     marker.header.stamp = ros::Time::now();
@@ -127,9 +127,9 @@ class PeopleTracker
   }
   
   visualization_msgs::Marker createHead(
-					int id,
-					int action,
-					geometry_msgs::Pose pose) {
+          int id,
+          int action,
+          geometry_msgs::Pose pose) {
     geometry_msgs::Vector3 scale;
     scale.x = 0.3;
     scale.y = 0.3;
@@ -144,9 +144,9 @@ class PeopleTracker
   }
   
   visualization_msgs::Marker createBody(
-					int id,
-					int action,
-					geometry_msgs::Pose pose) {
+          int id,
+          int action,
+          geometry_msgs::Pose pose) {
     geometry_msgs::Vector3 scale;
     scale.x = 0.35;
     scale.y = 0.35;
@@ -161,9 +161,9 @@ class PeopleTracker
   }
   
   std::vector<visualization_msgs::Marker> createLegs(
-						     int idl, int idr,
-						     int action,
-						     geometry_msgs::Pose pose) {
+                 int idl, int idr,
+                 int action,
+                 geometry_msgs::Pose pose) {
     std::vector<visualization_msgs::Marker> legs;
     geometry_msgs::Vector3 scale;
     scale.x = 0.15;
@@ -180,9 +180,9 @@ class PeopleTracker
   }
 
   std::vector<visualization_msgs::Marker> createArms(
-						     int idl, int idr,
-						     int action,
-						     geometry_msgs::Pose pose) {
+                 int idl, int idr,
+                 int action,
+                 geometry_msgs::Pose pose) {
     std::vector<visualization_msgs::Marker> arms;
     geometry_msgs::Vector3 scale;
     scale.x = 0.1;
@@ -199,8 +199,8 @@ class PeopleTracker
   }
   
   std::vector<visualization_msgs::Marker> createHuman(
-						      int id,
-						      geometry_msgs::Pose pose) {
+                  int id,
+                  geometry_msgs::Pose pose) {
     std::vector<visualization_msgs::Marker> human;
     human.push_back(createHead(id++, visualization_msgs::Marker::ADD, pose));
     human.push_back(createBody(id++, visualization_msgs::Marker::ADD, pose));
@@ -223,6 +223,7 @@ class PeopleTracker
   ros::Publisher pub_pose_array;
   ros::Publisher pub_people;
   ros::Publisher pub_trajectory;
+  ros::Publisher pub_trajectory_acc;
   ros::Publisher pub_marker;
   tf::TransformListener* listener;
   std::string target_frame;

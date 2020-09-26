@@ -130,7 +130,7 @@ Bayes_base::Float
 						// inverse innovation covariance
 	rcond = UdUinversePD (SI, S);
 	rclimit.check_PD(rcond, "S not PD in observe");
-
+	
 	Matrix K (prod(XHT*(one-omega), SI));
 
 						// state update

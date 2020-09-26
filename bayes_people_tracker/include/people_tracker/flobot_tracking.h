@@ -102,6 +102,9 @@ bool MTRK::initialize(FilterType* &filter, sequence_t& obsvSeq, observ_model_t o
     filter = new FilterType(4);
     filter->init(x, X);
   }
+
+  if(om_flag == BEARING) return false;
+  
   
   return true;
 }
@@ -128,9 +131,15 @@ class SimpleTracking {
       det.ctm = new CartesianModel(pos_noise_x, pos_noise_y);
     if(om_flag == POLAR)
       det.plm = new PolarModel(pos_noise_x, pos_noise_y);
+
+    if(om_flag == BEARING)
+      det.brm = new BearingModel(pos_noise_y); 
+    
     det.seqSize = seqSize;
     det.seqTime = seqTime;
     detectors[name] = det;
+  ROS_INFO_STREAM("Finished adding detector");
+
   }
   
   std::map<long, std::vector<geometry_msgs::Pose> > track(double* track_time = NULL) {
@@ -142,7 +151,9 @@ class SimpleTracking {
     
     // prediction
     cvm->update(dt);
+
     mtrk.template predict<CVModel>(*cvm);
+
     
     //=========================== @todo what's this? ===========================//
     detector_model dummy_det;
@@ -209,6 +220,8 @@ class SimpleTracking {
     time += dt;
     
     // prediction
+
+
     cvm->update(dt);
     mtrk.template predict<CVModel>(*cvm);
     
@@ -216,29 +229,44 @@ class SimpleTracking {
     
     for(std::vector<geometry_msgs::Point>::iterator li = obsv.begin(); li != obsv.end(); ++li) {
       if(det.om_flag == CARTESIAN) {
-	(*observation)[0] = li->x;
-	(*observation)[1] = li->y;
+        (*observation)[0] = li->x;
+        (*observation)[1] = li->y;
       }
       if(det.om_flag == POLAR) {
-	(*observation)[0] = atan2(li->y, li->x); // bearing
-	(*observation)[1] = sqrt(pow(li->x,2) + pow(li->y,2)); // range
+      	(*observation)[0] = atan2(li->y, li->x); // bearing
+      	(*observation)[1] = sqrt(pow(li->x,2) + pow(li->y,2)); // range
       }
+      if(det.om_flag == BEARING) {
+		    (*observation)[0] = atan2(li->y , li->x); // bearing
+
+      }
+
+
 #ifdef ONLINE_LEARNING
       // @todo online learning ros message type
       mtrk.addObservation(*observation, obsv_time, boost::to_string((uint32_t)li->z), detector_name);
+
 #else
+
       mtrk.addObservation(*observation, obsv_time);
+
 #endif
     }
-    
+    if(det.om_flag == BEARING){
+      // det.brm->update(0, 0, 0);
+      mtrk.process(*(det.brm), det.om_flag, det.alg, det.seqSize, det.seqTime, stdLimit);
+
+    }
     if(det.om_flag == CARTESIAN) {
       mtrk.process(*(det.ctm), det.om_flag, det.alg, det.seqSize, det.seqTime, stdLimit);
     }
     if(det.om_flag == POLAR) {
-      //det.plm->update(robot_pose.position.x, robot_pose.position.y, robot_pose.orientation.w);
+      // det.plm->update(robot_pose.position.x, robot_pose.position.y, robot_pose.orientation.w);
       det.plm->update(0, 0, 0);
       mtrk.process(*(det.plm), det.om_flag, det.alg, det.seqSize, det.seqTime, stdLimit);
     }
+
+
   }
   
  private:
@@ -252,11 +280,16 @@ class SimpleTracking {
   typedef struct {
     CartesianModel *ctm;    // Cartesian observation model
     PolarModel *plm;        // Polar observation model
+
+    BearingModel *brm;
+
+    
     observ_model_t om_flag; // Observation model flag
     association_t alg;      // Data association algorithm
     unsigned int seqSize;   // Minimum number of observations for new track creation
     double seqTime;         // Minimum interval between observations for new track creation
-  } detector_model;
+  } 
+  detector_model;
   std::map<std::string, detector_model> detectors;
   
   double getTime() {

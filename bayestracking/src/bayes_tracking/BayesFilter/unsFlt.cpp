@@ -14,6 +14,8 @@
 #include "bayes_tracking/BayesFilter/models.hpp"
 #include <cmath>
 
+#include <iostream>
+
 
 /* Filter namespace */
 namespace Bayesian_filter
@@ -51,11 +53,26 @@ void Unscented_scheme::unscented (FM::ColMatrix& XX, const FM::Vec& x, const FM:
  * Fails if scale is negative
  */
 {
+	
 	UTriMatrix Sigma(x_size,x_size);
 
 						// Get a upper Cholesky factorisation
-	Float rcond = UCfactor(Sigma, X);
-	rclimit.check_PSD(rcond, "X not PSD");
+	try{
+		Float rcond = UCfactor(Sigma, X);
+		
+		if (rcond<=0) {
+			std::cout << rcond << "if X NOT PSD" <<std::endl;
+			throw 10;
+			}
+
+		rclimit.check_PSD(rcond, "X not PSD");
+	}
+	catch (int n){
+		std::cout<<"caught rcond <=0 "<<std::endl;
+		float rcond = 0.1;
+		rclimit.check_PSD(rcond, "X not PSD");
+	}
+
 	Sigma *= std::sqrt(scale);
 
 						// Generate XX with the same sample Mean and Covariance as before
@@ -342,7 +359,12 @@ Bayes_base::Float Unscented_scheme::observe (Correlated_additive_observe_model& 
 	noalias(S) += h.Z;
 						// Inverse innovation covariance
 	Float rcond = UdUinversePD (SI, S);
-	rclimit.check_PD(rcond, "S not PD in observe");
+
+	if (rcond<=0){ 
+		rcond = 0.01;
+		// std::cout<< rcond << " S not PD in observe (MSG)" <<std::endl;
+	}
+	rclimit.check_PD(rcond, " S not PD in observe");
 						// Kalman gain
 	noalias(W) = prod(Xxz,SI);
 

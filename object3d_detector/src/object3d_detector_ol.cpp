@@ -15,6 +15,8 @@
 // SVM
 #include "svm.h"
 
+#define MULTI_SENSOR
+
 typedef struct feature {
   /*** for visualization ***/
   Eigen::Vector4f centroid;
@@ -86,6 +88,7 @@ private:
   std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr, Eigen::aligned_allocator<pcl::PointCloud<pcl::PointXYZI>::Ptr > > learnable_clusters_;
   std::vector<double> clusters_probability_;
   bool find_the_best_training_parameters_;
+  float track_probability_;
   
 public:
   Object3dDetector();
@@ -123,7 +126,8 @@ Object3dDetector::Object3dDetector() {
   private_nh.param<int>("round_negatives", round_negatives_, 100);
   private_nh.param<int>("max_trains", max_trains_, 11);
   private_nh.param<bool>("find_the_best_training_parameters", find_the_best_training_parameters_, true);
-
+  private_nh.param<float>("track_probability", track_probability_, 0.7);
+  
   private_nh.param<float>("vfilter_min_x", vfilter_min_x_, 0.2);
   private_nh.param<float>("vfilter_max_x", vfilter_max_x_, 1.0);
   private_nh.param<float>("vfilter_min_y", vfilter_min_y_, 0.2);
@@ -155,8 +159,9 @@ Object3dDetector::Object3dDetector() {
   svm_problem_.l = 0;
   svm_problem_.y = (double *)malloc(svm_node_size_*sizeof(double));
   svm_problem_.x = (struct svm_node **)malloc(svm_node_size_*sizeof(struct svm_node *));
-  for(int i = 0; i < svm_node_size_; i++)
+  for(int i = 0; i < svm_node_size_; i++) {
     svm_problem_.x[i] = (struct svm_node *)malloc((FEATURE_SIZE + 1)*sizeof(struct svm_node));
+  }
   // one-line malloc
   //svm_problem_.x = (struct svm_node **)malloc((max_positives_+max_negatives_)*sizeof(struct svm_node *)+((max_positives_+max_negatives_)*((FEATURE_SIZE+1)*sizeof(struct svm_node))));
   
@@ -185,20 +190,82 @@ Object3dDetector::~Object3dDetector() {
 
 /*** learning ***/
 void Object3dDetector::trajectoryCallback(const geometry_msgs::PoseArray::ConstPtr& trajectory) {
-  if(train_round_ == max_trains_ || (positive_+negative_) == (max_positives_+max_negatives_))
+  if(train_round_ == max_trains_ || (positive_+negative_) == (max_positives_+max_negatives_)) {
     return;
+  }
   
   pcl::PointCloud<pcl::PointXYZI> learned_cloud; // debug publishing
+  
+#ifdef MULTI_SENSOR
+  /*** track probability, leg_reliability_limit = 0.7, evaluation_greedy_NMS_threshold = 0.5 ***/
+  bool human_trajectory = false;
+  for(int i = 0; i < trajectory->poses.size(); i++) {
+    if(trajectory->poses[i].position.z < 0.0) {
+      if(train_round_ > 0) {
+  std::vector<double> probabilities, odds;
+  for(int j = 0; j < trajectory->poses.size(); j++) {
+    for(int k = 0; k < learnable_clusters_.size(); k++) {
+      if((uint32_t)trajectory->poses[j].position.z == learnable_clusters_[k]->header.seq) {
+        probabilities.push_back(clusters_probability_[k]);
+      }
+    }
+  }
+  if(probabilities.size() > 0) {
+    double product_odds = 1.0;
+    for(int k = 0; k < probabilities.size(); k++) {
+      if(probabilities[k] == 1.0) {
+        odds.push_back(100.0);
+      } else {
+        odds.push_back(probabilities[k] / (1 - probabilities[k]));
+      }
+    }
+    for(int k = 0; k < odds.size(); k++) {
+      product_odds *= odds[k];
+    }
+    //std::cerr << (product_odds / (1 + product_odds)) << std::endl;
+    if(product_odds / (1 + product_odds) > track_probability_) {
+      human_trajectory = true;
+    }
+  }
+      } else {
+  human_trajectory = true;
+      }
+      break;
+    }
+  }
+  
+  if(human_trajectory) {
+    bool stop = false;
+    for(int i = 0; i < trajectory->poses.size(); i++) {
+      for(int j = 0; j < learnable_clusters_.size(); j++) {
+    if((uint32_t)trajectory->poses[i].position.z == learnable_clusters_[j]->header.seq) {
+      Feature f;
+      extractFeature(learnable_clusters_[j], f);
+      saveFeature(f, svm_problem_.x[svm_problem_.l]);
+      if(positive_ < max_positives_) {
+        svm_problem_.y[svm_problem_.l++] = 1; // positive label
+        ++positive_ >= max_positives_ ? stop = true : stop = false;
+      }
+      //learned_cloud += *learnable_clusters_[j];
+      break;
+    }
+      }
+      if(stop) {
+  break;
+      }
+    }
+  }
+#else
   bool learn_it = true;
   
   if(train_round_ > 0) {
     learn_it = false;
     for(int i = 0; i < trajectory->poses.size(); i++) {
       for(int j = 0; j < learnable_clusters_.size(); j++) {
-	if((uint32_t)trajectory->poses[i].position.z == learnable_clusters_[j]->header.seq && learnable_clusters_[j]->header.frame_id == "human") {
-	  learn_it = true;
-	  break;
-	}
+  if((uint32_t)trajectory->poses[i].position.z == learnable_clusters_[j]->header.seq && learnable_clusters_[j]->header.frame_id == "human") {
+    learn_it = true;
+    break;
+  }
       }
       if(learn_it) break;
     }
@@ -208,26 +275,27 @@ void Object3dDetector::trajectoryCallback(const geometry_msgs::PoseArray::ConstP
     bool stop = false;
     for(int i = 0; i < trajectory->poses.size(); i++) {
       for(int j = 0; j < learnable_clusters_.size(); j++) {
-	if((uint32_t)trajectory->poses[i].position.z == learnable_clusters_[j]->header.seq) {
-	  Feature f;
-	  extractFeature(learnable_clusters_[j], f);
-	  saveFeature(f, svm_problem_.x[svm_problem_.l]);
-	  if(trajectory->header.frame_id == "human_trajectory" && positive_ < max_positives_) {
-	    svm_problem_.y[svm_problem_.l++] = 1; // 1, the positive label
-	    ++positive_ >= max_positives_ ? stop = true : stop = false;
-	    //learned_cloud += *learnable_clusters_[j];
-	  }
-	  if(train_round_ > 0 && trajectory->header.frame_id == "static_trajectory" && negative_ < max_negatives_) {
-	    svm_problem_.y[svm_problem_.l++] = -1; // -1, the negative label
-	    ++negative_ >= max_negatives_ ? stop = true : stop = false;
-	    //learned_cloud += *learnable_clusters_[j];
-	  }
-	  break;
-	}
+  if((uint32_t)trajectory->poses[i].position.z == learnable_clusters_[j]->header.seq) {
+    Feature f;
+    extractFeature(learnable_clusters_[j], f);
+    saveFeature(f, svm_problem_.x[svm_problem_.l]);
+    if(trajectory->header.frame_id == "human_trajectory" && positive_ < max_positives_) {
+      svm_problem_.y[svm_problem_.l++] = 1; // 1, the positive label
+      ++positive_ >= max_positives_ ? stop = true : stop = false;
+      //learned_cloud += *learnable_clusters_[j];
+    }
+    if(train_round_ > 0 && trajectory->header.frame_id == "static_trajectory" && negative_ < max_negatives_) {
+      svm_problem_.y[svm_problem_.l++] = -1; // negative label
+      ++negative_ >= max_negatives_ ? stop = true : stop = false;
+      //learned_cloud += *learnable_clusters_[j];
+    }
+    break;
+  }
       }
       if(stop) break;
     }
   }
+#endif
   
   if(learned_cloud_pub_.getNumSubscribers() > 0) {
     sensor_msgs::PointCloud2 ros_cloud;
@@ -276,11 +344,11 @@ void Object3dDetector::extractCluster(pcl::PointCloud<pcl::PointXYZI>::Ptr pc) {
     float range = 0.0;
     for(int j = 0; j < nested_regions_; j++) {
       float d2 = pc->points[(*pc_indices)[i]].x * pc->points[(*pc_indices)[i]].x +
-	pc->points[(*pc_indices)[i]].y * pc->points[(*pc_indices)[i]].y +
-	pc->points[(*pc_indices)[i]].z * pc->points[(*pc_indices)[i]].z;
+  pc->points[(*pc_indices)[i]].y * pc->points[(*pc_indices)[i]].y +
+  pc->points[(*pc_indices)[i]].z * pc->points[(*pc_indices)[i]].z;
       if(d2 > range*range && d2 <= (range+zone_[j])*(range+zone_[j])) {
-	indices_array[j].push_back((*pc_indices)[i]);
-	break;
+  indices_array[j].push_back((*pc_indices)[i]);
+  break;
       }
       range += zone_[j];
     }
@@ -305,33 +373,33 @@ void Object3dDetector::extractCluster(pcl::PointCloud<pcl::PointXYZI>::Ptr pc) {
       ec.extract(cluster_indices);
       
       for(std::vector<pcl::PointIndices>::const_iterator it = cluster_indices.begin(); it != cluster_indices.end(); it++) {
-	pcl::PointCloud<pcl::PointXYZI>::Ptr cluster(new pcl::PointCloud<pcl::PointXYZI>);
-	for(std::vector<int>::const_iterator pit = it->indices.begin(); pit != it->indices.end(); ++pit)
-	  cluster->points.push_back(pc->points[*pit]);
-	cluster->width = cluster->size();
-	cluster->height = 1;
-	cluster->is_dense = true;
-	
-	Eigen::Vector4f min, max;
-	pcl::getMinMax3D(*cluster, min, max);
-	if(max[0]-min[0] >= vfilter_min_x_ && max[0]-min[0] <= vfilter_max_x_ &&
-	   max[1]-min[1] >= vfilter_min_y_ && max[1]-min[1] <= vfilter_max_y_ &&
-	   max[2]-min[2] >= vfilter_min_z_ && max[2]-min[2] <= vfilter_max_z_ &&
-	   min[2] <= cluster_min_z_) {
-	  Feature f;
-	  extractFeature(cluster, f);
-	  features_.push_back(f);
-	  cluster->header.seq = learnable_cluster_id_++;
-	  learnable_clusters_.push_back(cluster);
-	} else {
-	  if(positive_ == max_positives_ && negative_ < max_negatives_) { // @todo condition test only, to be removed
-	    Feature f;
-	    extractFeature(cluster, f);
-	    saveFeature(f, svm_problem_.x[svm_problem_.l]);
-	    svm_problem_.y[svm_problem_.l++] = -1; // -1, the negative label
-	    ++negative_;
-	  }
-	}
+  pcl::PointCloud<pcl::PointXYZI>::Ptr cluster(new pcl::PointCloud<pcl::PointXYZI>);
+  for(std::vector<int>::const_iterator pit = it->indices.begin(); pit != it->indices.end(); ++pit)
+    cluster->points.push_back(pc->points[*pit]);
+  cluster->width = cluster->size();
+  cluster->height = 1;
+  cluster->is_dense = true;
+  
+  Eigen::Vector4f min, max;
+  pcl::getMinMax3D(*cluster, min, max);
+  if(max[0]-min[0] >= vfilter_min_x_ && max[0]-min[0] <= vfilter_max_x_ &&
+     max[1]-min[1] >= vfilter_min_y_ && max[1]-min[1] <= vfilter_max_y_ &&
+     max[2]-min[2] >= vfilter_min_z_ && max[2]-min[2] <= vfilter_max_z_ &&
+     min[2] <= cluster_min_z_) {
+    Feature f;
+    extractFeature(cluster, f);
+    features_.push_back(f);
+    cluster->header.seq = learnable_cluster_id_++;
+    learnable_clusters_.push_back(cluster);
+  } else {
+    if(positive_ == max_positives_ && negative_ < max_negatives_) { // @todo condition test only, to be removed
+      Feature f;
+      extractFeature(cluster, f);
+      saveFeature(f, svm_problem_.x[svm_problem_.l]);
+      svm_problem_.y[svm_problem_.l++] = -1; // negative label
+      ++negative_;
+    }
+  }
       }
     }
   }
@@ -400,9 +468,9 @@ void compute3ZoneCovarianceMatrix(pcl::PointCloud<pcl::PointXYZI>::Ptr plane, Ei
       zone_decomposed[0]->points.push_back(plane->points[i]);
     } else {
       if(plane->points[i].y >= mean(1)) // left lower half
-	zone_decomposed[1]->points.push_back(plane->points[i]);
+  zone_decomposed[1]->points.push_back(plane->points[i]);
       else // right lower half
-	zone_decomposed[2]->points.push_back(plane->points[i]);
+  zone_decomposed[2]->points.push_back(plane->points[i]);
     }
   }
   
@@ -427,11 +495,11 @@ void computeHistogramNormalized(pcl::PointCloud<pcl::PointXYZI>::Ptr pc, int hor
   for(int i = 0; i < horiz_bins; i++) {
     for(int j = 0; j < verti_bins; j++) {
       if(max[0]-min[0] > max[1]-min[1]) {
-	min_box << min[0]+horiz_itv*i, min[1], min[2]+verti_itv*j, 0;
-	max_box << min[0]+horiz_itv*(i+1), max[1], min[2]+verti_itv*(j+1), 0;
+  min_box << min[0]+horiz_itv*i, min[1], min[2]+verti_itv*j, 0;
+  max_box << min[0]+horiz_itv*(i+1), max[1], min[2]+verti_itv*(j+1), 0;
       } else {
-	min_box << min[0], min[1]+horiz_itv*i, min[2]+verti_itv*j, 0;
-	max_box << max[0], min[1]+horiz_itv*(i+1), min[2]+verti_itv*(j+1), 0;
+  min_box << min[0], min[1]+horiz_itv*i, min[2]+verti_itv*j, 0;
+  max_box << max[0], min[1]+horiz_itv*(i+1), min[2]+verti_itv*(j+1), 0;
       }
       std::vector<int> indices;
       pcl::getPointsInBox(*pc, min_box, max_box, indices);
@@ -458,14 +526,14 @@ void computeSlice(pcl::PointCloud<pcl::PointXYZI>::Ptr pc, int n, float *slice) 
     Eigen::Vector4f block_min, block_max;
     for(int i = 0; i < n; i++) {
       if(blocks[i]->size() > 0) {
-	// pcl::PCA<pcl::PointXYZI> pca;
-	// pcl::PointCloud<pcl::PointXYZI>::Ptr block_projected(new pcl::PointCloud<pcl::PointXYZI>);
-	// pca.setInputCloud(blocks[i]);
-	// pca.project(*blocks[i], *block_projected);
-	pcl::getMinMax3D(*blocks[i], block_min, block_max);
+  // pcl::PCA<pcl::PointXYZI> pca;
+  // pcl::PointCloud<pcl::PointXYZI>::Ptr block_projected(new pcl::PointCloud<pcl::PointXYZI>);
+  // pca.setInputCloud(blocks[i]);
+  // pca.project(*blocks[i], *block_projected);
+  pcl::getMinMax3D(*blocks[i], block_min, block_max);
       } else {
-	block_min.setZero();
-	block_max.setZero();
+  block_min.setZero();
+  block_max.setZero();
       }
       slice[i*2] = block_max[0] - block_min[0];
       slice[i*2+1] = block_max[1] - block_min[1];
@@ -596,26 +664,26 @@ void Object3dDetector::classify() {
       /*** scale data ***/
       saveFeature(*it, svm_node_);
       for(int i = 0; i < FEATURE_SIZE; i++) {
-	if(svm_range_[i][0] == svm_range_[i][1]) // skip single-valued attribute
-	  continue;
-	if(svm_node_[i].value == svm_range_[i][0])
-	  svm_node_[i].value = svm_xlower_;
-	else if(svm_node_[i].value == svm_range_[i][1])
-	  svm_node_[i].value = svm_xupper_;
-	else
-	  svm_node_[i].value = svm_xlower_ + (svm_xupper_ - svm_xlower_) * (svm_node_[i].value - svm_range_[i][0]) / (svm_range_[i][1] - svm_range_[i][0]);
+  if(svm_range_[i][0] == svm_range_[i][1]) // skip single-valued attribute
+    continue;
+  if(svm_node_[i].value == svm_range_[i][0])
+    svm_node_[i].value = svm_xlower_;
+  else if(svm_node_[i].value == svm_range_[i][1])
+    svm_node_[i].value = svm_xupper_;
+  else
+    svm_node_[i].value = svm_xlower_ + (svm_xupper_ - svm_xlower_) * (svm_node_[i].value - svm_range_[i][0]) / (svm_range_[i][1] - svm_range_[i][0]);
       }
       
       /*** predict ***/
       if(svm_check_probability_model(svm_model_)) {
-	double prob_estimates[svm_model_->nr_class];
-	svm_predict_probability(svm_model_, svm_node_, prob_estimates);
-	clusters_probability_.push_back(prob_estimates[0]);
-	if(prob_estimates[0] > human_probability_)
-	  svm_find_human = true;
+  double prob_estimates[svm_model_->nr_class];
+  svm_predict_probability(svm_model_, svm_node_, prob_estimates);
+  clusters_probability_.push_back(prob_estimates[0]);
+  if(prob_estimates[0] > human_probability_)
+    svm_find_human = true;
       } else {
-	if(svm_predict(svm_model_, svm_node_) == 1)
-	  svm_find_human = true;
+  if(svm_predict(svm_model_, svm_node_) == 1)
+    svm_find_human = true;
       }
     }
     
@@ -631,16 +699,16 @@ void Object3dDetector::classify() {
       pose.orientation.w = 1;
       pose_array.poses.push_back(pose);
       if(svm_find_human)
-	learnable_clusters_[i]->header.frame_id = "human";
+  learnable_clusters_[i]->header.frame_id = "human";
       //std::cerr << "pose ID = " << pose.position.z << std::endl;
     } else {
       if(svm_find_human) {
-	geometry_msgs::Pose pose;
-	pose.position.x = it->centroid[0];
-	pose.position.y = it->centroid[1];
-	pose.position.z = -1;//it->centroid[2];
-	pose.orientation.w = 1;
-	pose_array.poses.push_back(pose);
+  geometry_msgs::Pose pose;
+  pose.position.x = it->centroid[0];
+  pose.position.y = it->centroid[1];
+  pose.position.z = -1;//it->centroid[2];
+  pose.orientation.w = 1;
+  pose_array.poses.push_back(pose);
       }
     }
     
@@ -707,6 +775,7 @@ void Object3dDetector::classify() {
 
 void Object3dDetector::train() {
   if(train_round_ == max_trains_ || (positive_+negative_) < (max_positives_+max_negatives_))
+
     return;
   
   clock_t t = clock();
@@ -716,13 +785,13 @@ void Object3dDetector::train() {
   for(int i = 0; i < (max_positives_+max_negatives_)*train_round_; i++) {
     for(int j = 0; j < FEATURE_SIZE; j++) {
       if(svm_range_[j][0] == svm_range_[j][1]) // skip single-valued attribute
-	continue;
+  continue;
       if(svm_problem_.x[i][j].value == svm_xlower_)
-	svm_problem_.x[i][j].value = svm_range_[j][0];
+  svm_problem_.x[i][j].value = svm_range_[j][0];
       else if(svm_problem_.x[i][j].value == svm_xupper_)
-	svm_problem_.x[i][j].value = svm_range_[j][1];
+  svm_problem_.x[i][j].value = svm_range_[j][1];
       else
-	svm_problem_.x[i][j].value = svm_range_[j][0] + (svm_problem_.x[i][j].value - svm_xlower_) * (svm_range_[j][1] - svm_range_[j][0]) / (svm_xupper_ - svm_xlower_);
+  svm_problem_.x[i][j].value = svm_range_[j][0] + (svm_problem_.x[i][j].value - svm_xlower_) * (svm_range_[j][1] - svm_range_[j][0]) / (svm_xupper_ - svm_xlower_);
     }
   }
   
@@ -754,13 +823,13 @@ void Object3dDetector::train() {
   for(int i = 0; i < svm_problem_.l; i++) {
     for(int j = 0; j < FEATURE_SIZE; j++) {
       if(svm_range_[j][0] == svm_range_[j][1]) // skip single-valued attribute
-	continue;
+  continue;
       if(svm_problem_.x[i][j].value == svm_range_[j][0])
-	svm_problem_.x[i][j].value = svm_xlower_;
+  svm_problem_.x[i][j].value = svm_xlower_;
       else if(svm_problem_.x[i][j].value == svm_range_[j][1])
-	svm_problem_.x[i][j].value = svm_xupper_;
+  svm_problem_.x[i][j].value = svm_xupper_;
       else
-	svm_problem_.x[i][j].value = svm_xlower_ + (svm_xupper_ - svm_xlower_) * (svm_problem_.x[i][j].value - svm_range_[j][0]) / (svm_range_[j][1] - svm_range_[j][0]);
+  svm_problem_.x[i][j].value = svm_xlower_ + (svm_xupper_ - svm_xlower_) * (svm_problem_.x[i][j].value - svm_range_[j][0]) / (svm_range_[j][1] - svm_range_[j][0]);
       //std::cerr << "training data " << i << " [attribute " << j << "]: " << svm_problem_.x[i][j].value << std::endl;
     }
   }
@@ -772,7 +841,7 @@ void Object3dDetector::train() {
     for(int i = 0; i < svm_problem_.l; i++) {
       s << svm_problem_.y[i];
       for(int j = 0; j < FEATURE_SIZE; j++)
-	s << " " << svm_problem_.x[i][j].index << ":" <<  svm_problem_.x[i][j].value;
+  s << " " << svm_problem_.x[i][j].index << ":" <<  svm_problem_.x[i][j].value;
       s << "\n";
     }
     s.close();
@@ -782,15 +851,15 @@ void Object3dDetector::train() {
       char result[100];
       FILE *fp = popen("./grid.py svm_training_data", "r");
       if(fp == NULL) {
-	std::cerr << "Can not run cross validation!" << std::endl;
+  std::cerr << "Can not run cross validation!" << std::endl;
       } else {
-	if(fgets(result, 100, fp) != NULL) {
-	  char *pch = strtok(result, " ");
-	  svm_parameter_.C = atof(pch); pch = strtok(NULL, " ");
-	  svm_parameter_.gamma = atof(pch); pch = strtok(NULL, " ");
-	  float rate = atof(pch);
-	  std::cerr << "Best c=" << svm_parameter_.C << ", g=" << svm_parameter_.gamma << " CV rate=" << rate << std::endl;
-	}
+  if(fgets(result, 100, fp) != NULL) {
+    char *pch = strtok(result, " ");
+    svm_parameter_.C = atof(pch); pch = strtok(NULL, " ");
+    svm_parameter_.gamma = atof(pch); pch = strtok(NULL, " ");
+    float rate = atof(pch);
+    std::cerr << "Best c=" << svm_parameter_.C << ", g=" << svm_parameter_.gamma << " CV rate=" << rate << std::endl;
+  }
       }
       pclose(fp);
     }

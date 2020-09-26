@@ -1,8 +1,8 @@
 <launch>
   <!-- rosbag play -->
-  <arg name="bag"/>
+  <arg name="bag" value="/media/paris/External\ Drive/flobot/2016-05-23-dataset-stationary_1/2016-05-23-12-09-37_9.bag"/>
   <param name="use_sim_time" value="true"/>
-  <node pkg="rosbag" type="play" name="rosbag_play" args="--clock $(arg bag)" required="true"/>
+  <node pkg="rosbag" type="play" name="rosbag_play" args="--clock $(arg bag) --rate 1" required="true"/>
   
   <node pkg="velodyne_pointcloud" type="cloud_node" name="cloud_node">
     <param name="calibration" value="$(find velodyne_pointcloud)/params/VLP16db.yaml"/>

@@ -89,7 +89,7 @@ Object3dDetector::Object3dDetector() {
   private_nh.param<float>("z_limit_max", z_limit_max_, 1.2);
   private_nh.param<int>("cluster_size_min", cluster_size_min_, 5);
   private_nh.param<int>("cluster_size_max", cluster_size_max_, 30000);
-  private_nh.param<float>("human_probability", human_probability_, 0.7);
+  private_nh.param<float>("human_probability", human_probability_, 0.9);
   private_nh.param<bool>("human_size_limit", human_size_limit_, false);
   
   /****** load a pre-trained svm model ******/

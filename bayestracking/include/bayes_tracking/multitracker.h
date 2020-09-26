@@ -19,6 +19,7 @@
 #include "bayes_tracking/associationmatrix.h"
 #include "bayes_tracking/jpda.h"
 #include <float.h>
+#include <iostream>
 
 #define OL // online learning (@yz17iros)
 
@@ -41,7 +42,7 @@ namespace MTRK {
   
   typedef std::vector<observation_t> sequence_t;
   typedef enum {NN, /*JPDA,*/ NNJPDA} association_t;
-  typedef enum {CARTESIAN, POLAR} observ_model_t;
+  typedef enum {CARTESIAN, POLAR, BEARING} observ_model_t;
   
   // to be defined by user
   template<class FilterType>
@@ -144,6 +145,7 @@ namespace MTRK {
 	typename std::vector<filter_t>::iterator fi, fiEnd = m_filters.end();
 	for (fi = m_filters.begin(); fi != fiEnd; fi++) {
 	  fi->filter->predict(pm);
+
 	}
       }
     
@@ -300,6 +302,7 @@ namespace MTRK {
 	if (isLost(fi->filter, stdLimit)) {
 	  delete fi->filter;
 	  fi = m_filters.erase(fi);
+
 	  fiEnd = m_filters.end();
 	}
 	else {
@@ -368,11 +371,22 @@ namespace MTRK {
       {
 	typename std::map<int, int>::iterator ai, aiEnd = m_assignments.end();
 	for (ai = m_assignments.begin(); ai != aiEnd; ai++) {
-	  m_filters[ai->second].filter->observe(om, m_observations[ai->first].vec);
-#ifdef OL
-	  m_filters[ai->second].pose_id = m_observations[ai->first].flag;
-	  m_filters[ai->second].detector_name = m_observations[ai->first].name;
-#endif
+		try{
+
+			// std::cout<<m_observations[ai->first].vec<<std::endl;
+			m_filters[ai->second].filter->observe(om, m_observations[ai->first].vec);
+		#ifdef OL
+			m_filters[ai->second].pose_id = m_observations[ai->first].flag;
+			m_filters[ai->second].detector_name = m_observations[ai->first].name;
+		#endif		
+	  	// std::cout<<typeid(m_observations[ai->second]).name()<<std::endl;
+
+		}
+	  catch(...){
+	  	// std::cout<<ai->second<<std::endl;
+	  	// m_filters.erase(m_filters.begin()+ai->second);
+	  	std::cout<<"Caught Exception " <<m_observations[ai->first].vec<<","<<m_observations[ai->second].vec<<std::endl; //<<m_observations[ai->first].vec << std::endl;
+		}
 	}
       }
   };
